@@ -123,11 +123,52 @@
         document.addEventListener("touchend",   () => { ["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].forEach(k => keys[k] = false); });
         document.addEventListener("touchcancel",() => { ["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].forEach(k => keys[k] = false); });
 
+        // 캐릭터 직접 터치 드래그
+        let isDragging = false;
+        let dragOffsetX = 0, dragOffsetY = 0;
+
+        canvas.addEventListener("touchstart", function(e) {
+            if (gameOver) return;
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const tx = (touch.clientX - rect.left) * scaleX;
+            const ty = (touch.clientY - rect.top) * scaleY;
+            const cx = player.x + player.size / 2;
+            const cy = player.y + player.size / 2;
+            if (Math.hypot(tx - cx, ty - cy) < player.size / 2 + 20) {
+                isDragging = true;
+                dragOffsetX = tx - cx;
+                dragOffsetY = ty - cy;
+                e.preventDefault();
+            }
+        }, { passive: false });
+
+        canvas.addEventListener("touchmove", function(e) {
+            if (!isDragging || gameOver) return;
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const tx = (touch.clientX - rect.left) * scaleX;
+            const ty = (touch.clientY - rect.top) * scaleY;
+            player.x = Math.max(0, Math.min(canvas.width  - player.size, tx - dragOffsetX - player.size / 2));
+            player.y = Math.max(0, Math.min(canvas.height - player.size, ty - dragOffsetY - player.size / 2));
+            e.preventDefault();
+        }, { passive: false });
+
+        canvas.addEventListener("touchend", function() {
+            isDragging = false;
+        });
+
         function update() {
-            if (keys["ArrowLeft"]  || keys["a"]) player.x -= player.speed;
-            if (keys["ArrowRight"] || keys["d"]) player.x += player.speed;
-            if (keys["ArrowUp"]    || keys["w"]) player.y -= player.speed;
-            if (keys["ArrowDown"]  || keys["s"]) player.y += player.speed;
+            if (!isDragging) {
+                if (keys["ArrowLeft"]  || keys["a"]) player.x -= player.speed;
+                if (keys["ArrowRight"] || keys["d"]) player.x += player.speed;
+                if (keys["ArrowUp"]    || keys["w"]) player.y -= player.speed;
+                if (keys["ArrowDown"]  || keys["s"]) player.y += player.speed;
+            }
 
             player.x = Math.max(0, Math.min(canvas.width  - player.size, player.x));
             player.y = Math.max(0, Math.min(canvas.height - player.size, player.y));
