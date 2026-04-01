@@ -226,8 +226,12 @@
             const tnx = Math.max(0, Math.min(canvas.width  - player.size, tx - dragOffsetX - player.size / 2));
             const tny = Math.max(0, Math.min(canvas.height - player.size, ty - dragOffsetY - player.size / 2));
             if (mazeMode) {
-                if (!collidesWithWall(tnx, player.y)) player.x = tnx;
-                if (!collidesWithWall(player.x, tny)) player.y = tny;
+                const stepX = Math.sign(tnx - player.x) * Math.min(Math.abs(tnx - player.x), player.speed);
+                const stepY = Math.sign(tny - player.y) * Math.min(Math.abs(tny - player.y), player.speed);
+                const nx2 = player.x + stepX;
+                const ny2 = player.y + stepY;
+                if (nx2 >= 0 && nx2 + player.size <= canvas.width  && !collidesWithWall(nx2, player.y)) player.x = nx2;
+                if (ny2 >= 0 && ny2 + player.size <= canvas.height && !collidesWithWall(player.x, ny2)) player.y = ny2;
             } else {
                 player.x = tnx;
                 player.y = tny;
