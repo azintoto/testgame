@@ -62,21 +62,16 @@
         let foods = [];
         let playerImg = null;
 
-        // ─── 생존 모드 변수 ───
-        const SURVIVAL_START_LEVEL = 10;
-        const MAZE_START_LEVEL = 11;
-        const SURVIVE_FRAMES = 600; // 10초 (60fps 기준)
-        const CELL_SIZE = 40; // 미로 셀 크기 (10×10 = 400px)
-        let survivalMode = false;
-        let survivalFailed = false;
-        let enemies = [];
-        let surviveTimer = 0;
-        // ─── 미로 모드 변수 ───
-        let mazeMode = false;
-        let maze = [];
-        let wallRects = [];
-        let mazeGoal = null;
-        let mazeGoalImg = null;
+        // ─── 낙하물 피하기 모드 변수 ───
+        const FALLING_START_LEVEL = 10;
+        let fallingMode = false;
+        let fallingFailed = false;
+        let fallingHard = false;
+        let fallingObjects = [];
+        let fallingStarsCollected = 0;
+        let fallingStarsNeeded = 10;
+        let fallingSpawnTimer = 0;
+        let fallingSpawnInterval = 60;
 
         // ─── 캐릭터 이미지 (지니 폴더, 6개) ───
         const PLAYER_IMG_SRCS = [
@@ -125,60 +120,72 @@
             }
         }
 
-        function initSurvival() {
-            survivalMode = true;
-            surviveTimer = 0;
-            survivalFailed = false;
-            enemies = [];
-            // 생존 모드 진입 시 플레이어 리셋
+        function initFalling(hard) {
+            fallingMode = true;
+            fallingHard = hard;
+            fallingFailed = false;
+            fallingObjects = [];
+            fallingStarsCollected = 0;
+            fallingSpawnTimer = 0;
+            fallingSpawnInterval = hard ? 40 : 60;
             player.size = 30;
-            player.speed = 4;
+            player.speed = 5;
             player.x = canvas.width  / 2 - 15;
-            player.y = canvas.height / 2 - 15;
-            const count = 4; // 레벨10 전용: 구 레벨11과 동일한 난이도
-            const spd   = 1.5;
-            for (let i = 0; i < count; i++) {
-                let ex, ey;
-                const side = Math.floor(Math.random() * 4);
-                if      (side === 0) { ex = Math.random() * canvas.width;  ey = -25; }
-                else if (side === 1) { ex = Math.random() * canvas.width;  ey = canvas.height + 25; }
-                else if (side === 2) { ex = -25;                           ey = Math.random() * canvas.height; }
-                else                { ex = canvas.width + 25;              ey = Math.random() * canvas.height; }
-                enemies.push({ x: ex, y: ey, r: 20, speed: spd });
-            }
+            player.y = canvas.height - 60;
         }
 
-        function updateSurvival() {
+        function updateFalling() {
+            // 플레이어 좌우 이동만 허용
             if (!isDragging) {
                 if (keys["ArrowLeft"]  || keys["a"]) player.x -= player.speed;
                 if (keys["ArrowRight"] || keys["d"]) player.x += player.speed;
-                if (keys["ArrowUp"]    || keys["w"]) player.y -= player.speed;
-                if (keys["ArrowDown"]  || keys["s"]) player.y += player.speed;
             }
-            player.x = Math.max(0, Math.min(canvas.width  - player.size, player.x));
-            player.y = Math.max(0, Math.min(canvas.height - player.size, player.y));
+            player.x = Math.max(0, Math.min(canvas.width - player.size, player.x));
+            player.y = canvas.height - 60; // 하단 고정
 
+            // 낙하물 스폰
+            const maxObjects = fallingHard ? 6 : 4;
+            fallingSpawnTimer++;
+            if (fallingSpawnTimer >= fallingSpawnInterval && fallingObjects.length < maxObjects) {
+                fallingSpawnTimer = 0;
+                const isBomb = Math.random() < (fallingHard ? 0.45 : 0.3);
+                fallingObjects.push({
+                    x: 20 + Math.random() * (canvas.width - 40),
+                    y: -20, r: 18,
+                    type: isBomb ? 'bomb' : 'star',
+                    speed: (fallingHard ? 3.5 : 2.5) + Math.random() * 1.5
+                });
+            }
+
+            // 낙하물 이동 및 충돌
             const px = player.x + player.size / 2;
             const py = player.y + player.size / 2;
-
-            for (const e of enemies) {
-                const dx = px - e.x, dy = py - e.y;
-                const dist = Math.hypot(dx, dy) || 1;
-                e.x += (dx / dist) * e.speed;
-                e.y += (dy / dist) * e.speed;
-                if (Math.hypot(px - e.x, py - e.y) < player.size / 2 + e.r) {
-                    survivalFailed = true;
-                    gameOver = true;
-                    return;
+            fallingObjects = fallingObjects.filter(obj => {
+                obj.y += obj.speed;
+                if (obj.y > canvas.height + 20) return false;
+                if (Math.hypot(px - obj.x, py - obj.y) < player.size / 2 + obj.r) {
+                    if (obj.type === 'bomb') {
+                        fallingFailed = true;
+                        gameOver = true;
+                    } else {
+                        fallingStarsCollected++;
+                        player.score += 20;
+                        if (fallingStarsCollected >= fallingStarsNeeded) {
+                            if (!fallingHard) {
+                                player.score += 100;
+                                level++;
+                                initFalling(true);
+                            } else {
+                                player.score += 200;
+                                fallingMode = false;
+                                gameOver = true;
+                            }
+                        }
+                    }
+                    return false;
                 }
-            }
-
-            surviveTimer++;
-            if (surviveTimer >= SURVIVE_FRAMES) {
-                player.score += 100; // 생존 보너스
-                level++;
-                initMaze(); // 레벨 11 미로 모드로 전환
-            }
+                return true;
+            });
         }
 
         document.addEventListener("keydown", e => { keys[e.key] = true; e.preventDefault(); });
@@ -225,17 +232,8 @@
             const ty = (touch.clientY - rect.top) * scaleY;
             const tnx = Math.max(0, Math.min(canvas.width  - player.size, tx - dragOffsetX - player.size / 2));
             const tny = Math.max(0, Math.min(canvas.height - player.size, ty - dragOffsetY - player.size / 2));
-            if (mazeMode) {
-                const stepX = Math.sign(tnx - player.x) * Math.min(Math.abs(tnx - player.x), player.speed);
-                const stepY = Math.sign(tny - player.y) * Math.min(Math.abs(tny - player.y), player.speed);
-                const nx2 = player.x + stepX;
-                const ny2 = player.y + stepY;
-                if (nx2 >= 0 && nx2 + player.size <= canvas.width  && !collidesWithWall(nx2, player.y)) player.x = nx2;
-                if (ny2 >= 0 && ny2 + player.size <= canvas.height && !collidesWithWall(player.x, ny2)) player.y = ny2;
-            } else {
-                player.x = tnx;
-                player.y = tny;
-            }
+            player.x = tnx;
+            player.y = tny;
             e.preventDefault();
         }, { passive: false });
 
@@ -244,8 +242,7 @@
         });
 
         function update() {
-            if (survivalMode) { updateSurvival(); return; }
-            if (mazeMode)     { updateMaze();     return; }
+            if (fallingMode) { updateFalling(); return; }
 
             if (!isDragging) {
                 if (keys["ArrowLeft"]  || keys["a"]) player.x -= player.speed;
@@ -270,11 +267,11 @@
                 return true;
             });
 
-            // 음식을 모두 먹으면 레벨업 (레벨9까지 먹기, 레벨10부터 생존 모드)
+            // 음식을 모두 먹으면 레벨업 (레벨9까지 먹기, 레벨10부터 낙하물 모드)
             if (foods.length === 0) {
                 level++;
-                if (level >= SURVIVAL_START_LEVEL) {
-                    initSurvival();
+                if (level >= FALLING_START_LEVEL) {
+                    initFalling(false);
                 } else {
                     foodRadius = 8 + (level - 1) * 4;
                     initFoods();
@@ -282,146 +279,6 @@
             }
         }
 
-        // ─── 미로 헬퍼 함수들 ───
-        function collidesWithWall(nx, ny) {
-            const ps = player.size;
-            return wallRects.some(wr =>
-                nx < wr.x + wr.w && nx + ps > wr.x &&
-                ny < wr.y + wr.h && ny + ps > wr.y
-            );
-        }
-
-        function buildWallRects() {
-            const C = CELL_SIZE, T = 4;
-            wallRects = [];
-            wallRects.push({x: 0,       y: 0,       w: C*10,   h: T});
-            wallRects.push({x: 0,       y: C*10-T,  w: C*10,   h: T});
-            wallRects.push({x: 0,       y: 0,       w: T,      h: C*10});
-            wallRects.push({x: C*10-T,  y: 0,       w: T,      h: C*10});
-            for (let r = 0; r < 10; r++) {
-                for (let c = 0; c < 10; c++) {
-                    if (c < 9 && maze[r][c].right)  wallRects.push({x:(c+1)*C-2, y:r*C,       w:4, h:C});
-                    if (r < 9 && maze[r][c].bottom) wallRects.push({x:c*C,       y:(r+1)*C-2, w:C, h:4});
-                }
-            }
-        }
-
-        function initMaze() {
-            mazeMode = true;
-            survivalMode = false;
-            const COLS = 10, ROWS = 10;
-            maze = Array.from({length: ROWS}, () =>
-                Array.from({length: COLS}, () => ({ right: true, bottom: true, visited: false }))
-            );
-            function shuffle(arr) {
-                for (let i = arr.length - 1; i > 0; i--) {
-                    const j = Math.floor(Math.random() * (i + 1));
-                    [arr[i], arr[j]] = [arr[j], arr[i]];
-                }
-                return arr;
-            }
-            function carve(c, r) {
-                maze[r][c].visited = true;
-                for (const [dc, dr] of shuffle([[1,0],[-1,0],[0,1],[0,-1]])) {
-                    const nc = c + dc, nr = r + dr;
-                    if (nc >= 0 && nc < COLS && nr >= 0 && nr < ROWS && !maze[nr][nc].visited) {
-                        if (dc === 1)  maze[r][c].right   = false;
-                        if (dc === -1) maze[r][nc].right  = false;
-                        if (dr === 1)  maze[r][c].bottom  = false;
-                        if (dr === -1) maze[nr][c].bottom = false;
-                        carve(nc, nr);
-                    }
-                }
-            }
-            carve(0, 0);
-            buildWallRects();
-            mazeGoal = { col: 9, row: 9 };
-            mazeGoalImg = foodImgs[Math.floor(Math.random() * foodImgs.length)];
-            player.size  = 24;
-            player.speed = 2;
-            player.x = CELL_SIZE / 2 - 12;
-            player.y = CELL_SIZE / 2 - 12;
-        }
-
-        function updateMaze() {
-            let dx = 0, dy = 0;
-            if (!isDragging) {
-                if (keys["ArrowLeft"]  || keys["a"]) dx = -player.speed;
-                if (keys["ArrowRight"] || keys["d"]) dx =  player.speed;
-                if (keys["ArrowUp"]    || keys["w"]) dy = -player.speed;
-                if (keys["ArrowDown"]  || keys["s"]) dy =  player.speed;
-            }
-            const nx = player.x + dx;
-            if (nx >= 0 && nx + player.size <= canvas.width  && !collidesWithWall(nx, player.y)) player.x = nx;
-            const ny = player.y + dy;
-            if (ny >= 0 && ny + player.size <= canvas.height && !collidesWithWall(player.x, ny)) player.y = ny;
-            const cx = player.x + player.size / 2;
-            const cy = player.y + player.size / 2;
-            const gx = mazeGoal.col * CELL_SIZE + CELL_SIZE / 2;
-            const gy = mazeGoal.row * CELL_SIZE + CELL_SIZE / 2;
-            if (Math.hypot(cx - gx, cy - gy) < player.size / 2 + 18) {
-                player.score += 200;
-                mazeMode = false;
-                gameOver = true;
-            }
-        }
-
-        function drawMaze() {
-            const cw = canvas.width, ch = canvas.height;
-            const C = CELL_SIZE;
-            ctx.fillStyle = "#f5f0e0";
-            ctx.fillRect(0, 0, cw, ch);
-            // 시작 셀 초록, 목표 셀 황금
-            ctx.fillStyle = "rgba(80,200,80,0.25)";
-            ctx.fillRect(0, 0, C, C);
-            ctx.fillStyle = "rgba(255,200,0,0.3)";
-            ctx.fillRect(mazeGoal.col * C, mazeGoal.row * C, C, C);
-            // 벽
-            ctx.fillStyle = "#3a2000";
-            for (const wr of wallRects) ctx.fillRect(wr.x, wr.y, wr.w, wr.h);
-            // 목표 타요 이미지
-            const gcx = mazeGoal.col * C + C / 2;
-            const gcy = mazeGoal.row * C + C / 2;
-            const goalR = 18;
-            ctx.save();
-            ctx.beginPath();
-            ctx.arc(gcx, gcy, goalR, 0, Math.PI * 2);
-            ctx.clip();
-            if (mazeGoalImg && mazeGoalImg.complete && mazeGoalImg.naturalWidth > 0) {
-                ctx.drawImage(mazeGoalImg, gcx - goalR, gcy - goalR, goalR * 2, goalR * 2);
-            } else {
-                ctx.fillStyle = "#ffd700"; ctx.fill();
-            }
-            ctx.restore();
-            ctx.beginPath();
-            ctx.arc(gcx, gcy, goalR, 0, Math.PI * 2);
-            ctx.shadowColor = "#ffd700"; ctx.shadowBlur = 12;
-            ctx.strokeStyle = "#ffd700"; ctx.lineWidth = 3; ctx.stroke();
-            ctx.shadowBlur = 0;
-            // 플레이어
-            const px = player.x + player.size / 2;
-            const py = player.y + player.size / 2;
-            ctx.save();
-            ctx.beginPath();
-            ctx.arc(px, py, player.size / 2, 0, Math.PI * 2);
-            ctx.clip();
-            if (playerImg && playerImg.complete && playerImg.naturalWidth > 0) {
-                ctx.drawImage(playerImg, player.x, player.y, player.size, player.size);
-            } else {
-                ctx.fillStyle = "#3399ff"; ctx.fill();
-            }
-            ctx.restore();
-            ctx.beginPath();
-            ctx.arc(px, py, player.size / 2, 0, Math.PI * 2);
-            ctx.strokeStyle = "#00ccff"; ctx.lineWidth = 2; ctx.stroke();
-            // HUD 배경
-            ctx.fillStyle = "rgba(255,240,200,0.88)";
-            ctx.fillRect(0, 0, cw, 20);
-            ctx.fillStyle = "#330000";
-            ctx.font = "bold 13px sans-serif";
-            ctx.textAlign = "left";
-            ctx.fillText(`🏁 미로 탈출! 타요를 찾아라!   레벨: ${level}   점수: ${player.score}`, 4, 14);
-        }
 
         function drawEnding() {
             const cw = canvas.width, ch = canvas.height;
@@ -568,15 +425,11 @@
             level = 1;
             gameOver = false;
             foodRadius = 8;
-            survivalMode = false;
-            survivalFailed = false;
-            enemies = [];
-            surviveTimer = 0;
-            mazeMode = false;
-            maze = [];
-            wallRects = [];
-            mazeGoal = null;
-            mazeGoalImg = null;
+            fallingMode = false;
+            fallingFailed = false;
+            fallingObjects = [];
+            fallingStarsCollected = 0;
+            fallingSpawnTimer = 0;
             player.x = 180; player.y = 180;
             player.size = 20; player.speed = 3; player.score = 0;
             playerImg = playerImgs[Math.floor(Math.random() * playerImgs.length)];
@@ -585,7 +438,7 @@
             initFoods();
         }
 
-        function drawSurvivalFail() {
+        function drawFallingFail() {
             const cw = canvas.width, ch = canvas.height;
             ctx.fillStyle = "#1a0000";
             ctx.fillRect(0, 0, cw, ch);
@@ -594,12 +447,12 @@
             ctx.shadowBlur = 14;
             ctx.font = "bold 38px sans-serif";
             ctx.fillStyle = "#ff4444";
-            ctx.fillText("💀 잡혔어요!", cw / 2, ch / 2 - 55);
+            ctx.fillText("💣 폭발!", cw / 2, ch / 2 - 55);
             ctx.shadowBlur = 0;
             ctx.font = "bold 22px sans-serif";
             ctx.fillStyle = "white";
             ctx.fillText(`도달 레벨: ${level}`, cw / 2, ch / 2);
-            ctx.fillText(`생존 시간: ${Math.floor(surviveTimer / 60)}초`, cw / 2, ch / 2 + 36);
+            ctx.fillText(`획득 별: ${fallingStarsCollected}/${fallingStarsNeeded}`, cw / 2, ch / 2 + 36);
             ctx.font = "15px sans-serif";
             ctx.fillStyle = "#ffaaaa";
             ctx.fillText("다시 도전해봐요! 화이팅 💪", cw / 2, ch / 2 + 76);
@@ -608,31 +461,23 @@
             document.getElementById("dpad").style.display = "none";
         }
 
-        function drawSurvivalGame() {
+        function drawFallingGame() {
             const cw = canvas.width, ch = canvas.height;
             const bg = ctx.createLinearGradient(0, 0, 0, ch);
-            bg.addColorStop(0, "#0d0d2b");
-            bg.addColorStop(1, "#1a1a4e");
+            bg.addColorStop(0, "#001133");
+            bg.addColorStop(1, "#003366");
             ctx.fillStyle = bg;
             ctx.fillRect(0, 0, cw, ch);
 
-            // 적 그리기
-            enemies.forEach(e => {
-                ctx.save();
-                ctx.beginPath();
-                ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
-                const g = ctx.createRadialGradient(e.x, e.y, 2, e.x, e.y, e.r);
-                g.addColorStop(0, "#ff7777"); g.addColorStop(1, "#bb0000");
-                ctx.fillStyle = g; ctx.fill();
-                ctx.strokeStyle = "#ff2222"; ctx.lineWidth = 2; ctx.stroke();
-                // 눈
-                ctx.fillStyle = "white";
-                ctx.beginPath(); ctx.arc(e.x - 6, e.y - 5, 5, 0, Math.PI * 2); ctx.fill();
-                ctx.beginPath(); ctx.arc(e.x + 6, e.y - 5, 5, 0, Math.PI * 2); ctx.fill();
-                ctx.fillStyle = "#111";
-                ctx.beginPath(); ctx.arc(e.x - 6, e.y - 5, 2.5, 0, Math.PI * 2); ctx.fill();
-                ctx.beginPath(); ctx.arc(e.x + 6, e.y - 5, 2.5, 0, Math.PI * 2); ctx.fill();
-                ctx.restore();
+            // 낙하물 그리기
+            ctx.textAlign = "center";
+            fallingObjects.forEach(obj => {
+                ctx.font = "32px serif";
+                if (obj.type === 'bomb') {
+                    ctx.fillText("💣", obj.x, obj.y + 12);
+                } else {
+                    ctx.fillText("⭐", obj.x, obj.y + 12);
+                }
             });
 
             // 플레이어 그리기
@@ -640,7 +485,8 @@
             const py = player.y + player.size / 2;
             ctx.beginPath();
             ctx.arc(px, py, player.size / 2, 0, Math.PI * 2);
-            ctx.fillStyle = "#3399ff"; ctx.fill();
+            ctx.fillStyle = "#3399ff";
+            ctx.fill();
             if (playerImg && playerImg.complete && playerImg.naturalWidth > 0) {
                 ctx.save();
                 ctx.beginPath();
@@ -648,37 +494,29 @@
                 ctx.clip();
                 ctx.drawImage(playerImg, player.x, player.y, player.size, player.size);
                 ctx.restore();
+                ctx.beginPath();
+                ctx.arc(px, py, player.size / 2, 0, Math.PI * 2);
+                ctx.strokeStyle = "#00ccff";
+                ctx.lineWidth = 2;
+                ctx.stroke();
             }
-            ctx.beginPath();
-            ctx.arc(px, py, player.size / 2, 0, Math.PI * 2);
-            ctx.strokeStyle = "#00ccff"; ctx.lineWidth = 2; ctx.stroke();
-
-            // 생존 타이머 바
-            const remaining = Math.max(0, SURVIVE_FRAMES - surviveTimer);
-            const ratio = remaining / SURVIVE_FRAMES;
-            ctx.fillStyle = "rgba(0,0,0,0.45)";
-            ctx.fillRect(8, 28, cw - 16, 13);
-            ctx.fillStyle = ratio > 0.5 ? "#00ee88" : ratio > 0.25 ? "#ffcc00" : "#ff4444";
-            ctx.fillRect(8, 28, (cw - 16) * ratio, 13);
-            ctx.strokeStyle = "rgba(255,255,255,0.6)"; ctx.lineWidth = 1;
-            ctx.strokeRect(8, 28, cw - 16, 13);
 
             // HUD
+            ctx.textAlign = "left";
             ctx.fillStyle = "white";
             ctx.font = "bold 14px sans-serif";
-            ctx.textAlign = "left";
-            ctx.fillText(`레벨: ${level}  ⏱ ${Math.ceil(remaining / 60)}초  적: ${enemies.length}마리  점수: ${player.score}`, 8, 20);
+            const diffLabel = fallingHard ? "🔥 어려움 (레벨11)" : "⭐ 보통 (레벨10)";
+            ctx.fillText(`별: ${fallingStarsCollected}/${fallingStarsNeeded}  점수: ${player.score}  ${diffLabel}`, 8, 20);
         }
 
         function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             if (gameOver) {
-                if (survivalFailed) { drawSurvivalFail(); }
+                if (fallingFailed) { drawFallingFail(); }
                 else { drawEnding(); }
                 return;
             }
-            if (survivalMode) { drawSurvivalGame(); return; }
-            if (mazeMode)     { drawMaze();         return; }
+            if (fallingMode) { drawFallingGame(); return; }
 
             // 자동차 음식 그리기
             // 타요 이미지 - 원형 클리핑
